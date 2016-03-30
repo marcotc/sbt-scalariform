@@ -16,15 +16,23 @@
 
 package com.typesafe.sbt
 
-import sbt._
 import sbt.Keys._
 import sbt.{ File, FileFilter, _ }
+
 import scala.collection.immutable.Seq
 import scalariform.formatter.ScalaFormatter
-import scalariform.formatter.preferences.{ IFormattingPreferences, PreferencesImporterExporter }
-import scalariform.parser.ScalaParserException
+import scalariform.formatter.preferences.IFormattingPreferences
+import scalariform.utils.TextEdit
 
-private object Scalariform {
+sealed trait FormatResult
+case object FormattedCorrectly extends FormatResult
+case object NotFormattedCorrectly extends FormatResult
+
+import com.typesafe.sbt.Scalariform._
+
+import scala.io.Source
+
+private object ScalariformTest {
 
   def apply(
     preferences:       IFormattingPreferences,
@@ -37,24 +45,31 @@ private object Scalariform {
     scalaVersion:      String
   ): Seq[File] = {
 
-    def log(label: String, logger: Logger)(message: String)(count: String) =
-      logger.info(message.format(count, label))
+    def log(label: String, logger: Logger)(message: String)(count: String) = {
+      logger.error(message.format(count, label))
+    }
 
-    def performFormat(files: Set[File]) =
-      for (file <- files if file.exists) {
-        try {
-          val contents = IO.read(file)
-          val formatted = ScalaFormatter.format(
-            contents,
-            preferences,
-            scalaVersion = pureScalaVersion(scalaVersion)
-          )
-          if (formatted != contents) IO.write(file, formatted)
-        } catch {
-          case e: ScalaParserException =>
-            streams.log.warn("Scalariform parser error for %s: %s".format(file, e.getMessage))
-        }
+    def checkSource(source: Source, doFormat: String ⇒ List[TextEdit]): FormatResult = {
+      val original = source.mkString
+      doFormat(original) match {
+        case Nil => FormattedCorrectly
+        case _   => NotFormattedCorrectly
       }
+    }
+
+    def testFormat(files: Set[File], logFun: String => Unit): Boolean = {
+      (for (file <- files if file.exists) yield {
+        val doFormat = ScalaFormatter.formatAsEdits(_: String, preferences, scalaVersion = pureScalaVersion(scalaVersion))
+        val contents = Source.fromFile(file)
+        checkSource(contents, doFormat) match {
+          case FormattedCorrectly => true
+          case NotFormattedCorrectly => {
+            logFun(s"File not properly formatted: $file")
+            false
+          }
+        }
+      }).fold(true)(_ && _)
+    }
 
     val files = sourceDirectories.descendantsExcept(includeFilter, excludeFilter).get.toSet
     val cache = streams.cacheDirectory / "scalariform"
@@ -62,40 +77,25 @@ private object Scalariform {
     if (preferencesChanged(streams.cacheDirectory / "scalariform-preferences")(preferences)) {
       IO.delete(cache)
     }
-    handleFiles(files, cache, logFun("Formatting %s %s ..."), performFormat)
-    handleFiles(files, cache, logFun("Reformatted %s %s."), _ => ()).toList // recalculate cache because we're formatting in-place
+    handleFiles(files, cache, logFun("Checking format: %s %s ..."), testFormat).toList
   }
 
   def handleFiles(
     files:     Set[File],
     cache:     File,
     logFun:    String => Unit,
-    updateFun: Set[File] => Unit
+    updateFun: (Set[File], String => Unit) => Boolean
   ): Set[File] = {
 
     def handleUpdate(in: ChangeReport[File], out: ChangeReport[File]) = {
       val files = in.modified -- in.removed
       inc.Analysis.counted("Scala source", "", "s", files.size) foreach logFun
-      updateFun(files)
+      if (!updateFun(files, logFun)) {
+        sys.error("Validation failed")
+      }
       files
     }
 
     FileFunction.cached(cache)(FilesInfo.hash, FilesInfo.exists)(handleUpdate)(files)
   }
-
-  def pureScalaVersion(scalaVersion: String): String =
-    scalaVersion split "-" head
-
-  def preferencesChanged(cacheDir: File): IFormattingPreferences => Boolean = {
-    import com.typesafe.sbt.PreferencesProtocol._
-    val prefChanged = new Changed[IFormattingPreferences](cacheDir)
-    prefChanged({ _ => true }, { _ => false })
-  }
-
-  implicit val prefEquivalence = new Equiv[IFormattingPreferences]() {
-    override def equiv(x: IFormattingPreferences, y: IFormattingPreferences): Boolean = {
-      PreferencesImporterExporter.asProperties(x) == PreferencesImporterExporter.asProperties(y)
-    }
-  }
-
 }

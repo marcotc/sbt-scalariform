@@ -40,6 +40,12 @@ object SbtScalariform extends AutoPlugin {
         "Format (Scala) sources using scalariform"
       )
 
+    val scalariformTest: TaskKey[Seq[File]] =
+      TaskKey[Seq[File]](
+        prefixed("test"),
+        "Test if (Scala) sources are formatted using scalariform"
+      )
+
     val scalariformPreferences: SettingKey[IFormattingPreferences] =
       SettingKey[IFormattingPreferences](
         prefixed("preferences"),
@@ -64,6 +70,8 @@ object SbtScalariform extends AutoPlugin {
 
     val format = autoImport.scalariformFormat
 
+    val test = autoImport.scalariformTest
+
     val preferences = autoImport.scalariformPreferences
   }
 
@@ -86,6 +94,16 @@ object SbtScalariform extends AutoPlugin {
     List(
       (sourceDirectories in Global in scalariformFormat) := List(scalaSource.value),
       scalariformFormat := Scalariform(
+        scalariformPreferences.value,
+        (sourceDirectories in scalariformFormat).value.toList,
+        (includeFilter in scalariformFormat).value,
+        (excludeFilter in scalariformFormat).value,
+        thisProjectRef.value,
+        configuration.value,
+        streams.value,
+        scalaVersion.value
+      ),
+      scalariformTest := ScalariformTest(
         scalariformPreferences.value,
         (sourceDirectories in scalariformFormat).value.toList,
         (includeFilter in scalariformFormat).value,

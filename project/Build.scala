@@ -21,11 +21,13 @@ object SbtScalariformBuild extends Build {
       .setPreference(SpacesAroundMultiImports, true)
   }
 
+  lazy val repository = IO.read(Path.userHome / ".ivy2" / ".repository").trim
+
   def getPublishToRepo(isSnapshot: Boolean) =
     if (isSnapshot)
-      Some("snapshots" at "https://oss.sonatype.org/content/repositories/snapshots")
+      Some("snapshots" at repository + "/content/repositories/snapshots")
     else
-      Some("releases" at "https://oss.sonatype.org/service/local/staging/deploy/maven2")
+      Some("releases" at repository + "/content/repositories/releases")
 
   val sbtScalariform: Project = Project(
     "sbt-scalariform",
@@ -50,6 +52,7 @@ object SbtScalariformBuild extends Build {
       publishMavenStyle := true,
       publishArtifact in Test := false,
       publishArtifact in (Compile, packageSrc) := true,
+      credentials += Credentials(Path.userHome / ".ivy2" / ".credentials"),
       pomExtra :=
         <url>http://github.com/daniel-trinh/sbt-scalariform</url>
           <licenses>
